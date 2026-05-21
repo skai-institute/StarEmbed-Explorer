@@ -104,21 +104,19 @@ class ErrorBoundary extends Component {
 // ── Main App ───────────────────────────────────────────────────
 
 export default function App() {
-  const [datasets, setDatasets] = useState(() => {
-    const url = descriptorFromURL();
-    return url ? [url, ...DATASETS] : DATASETS;
-  });
-  const [dataset, setDataset] = useState(() => {
-    const url = descriptorFromURL();
-    return url ?? DATASETS[0];
-  });
+  const urlDescriptor = useMemo(() => descriptorFromURL(), []);
+  const [datasets, setDatasets] = useState(() =>
+    urlDescriptor ? [urlDescriptor, ...DATASETS] : DATASETS
+  );
+  const [dataset, setDataset] = useState(null);
+  const [welcomeOpen, setWelcomeOpen] = useState(true);
   const [info, setInfo] = useState(null);
   const [summary, setSummary] = useState(null);
   const [enabledClasses, setEnabledClasses] = useState(null);
   const [totalRows, setTotalRows] = useState(0);
   const [currentRow, setCurrentRow] = useState(null);
   const [error, setError] = useState(null);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(false);
   const [filterOpen, setFilterOpen] = useState(true);
   const [bottomH, setBottomH] = useState(504);
   const [activeBands, setActiveBands] = useState(null);
@@ -127,7 +125,6 @@ export default function App() {
 
   const containerRef = useRef(null);
   const dsRef = useRef(null);
-  const dirInputRef = useRef(null);
 
   // Reset activeBands whenever a new dataset summary arrives.
   useEffect(() => {
@@ -136,6 +133,7 @@ export default function App() {
 
   // Load dataset — fetch summary + first random star.
   useEffect(() => {
+    if (!dataset) return;
     let cancelled = false;
     setLoading(true);
     setError(null);
@@ -230,15 +228,14 @@ export default function App() {
       return next;
     });
 
-  const handleDirChange = (e) => {
-    const fileArray = Array.from(e.target.files);
-    e.target.value = '';
-    if (!fileArray.length) return;
-    const dirName =
-      fileArray[0]?.webkitRelativePath?.split('/')[0] ?? fileArray[0]?.name ?? 'dataset';
-    const descriptor = { id: `hf-disk::${dirName}`, label: dirName, source: 'hf-disk', files: fileArray };
-    setDatasets((prev) => [...prev.filter((d) => d.id !== descriptor.id), descriptor]);
+  const handleWelcomeConfirm = (descriptor) => {
+    setDatasets((prev) =>
+      prev.some((d) => d.id === descriptor.id)
+        ? prev
+        : [...prev, descriptor]
+    );
     setDataset(descriptor);
+    setWelcomeOpen(false);
   };
 
   const onResizeStart = (e) => {
@@ -279,7 +276,7 @@ export default function App() {
   const cls = row?.class_str ?? '—';
   const clsColor = classColors[cls] || ACCENT;
 
-  const datasetName = info?.path ?? dataset.label;
+  const datasetName = info?.path ?? dataset?.label ?? '';
 
   return (
     <div
@@ -318,11 +315,10 @@ export default function App() {
           }}>SEE</span>
         </div>
 
-        {/* Dataset controls */}
-        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-          <select
-            value={dataset.id}
-            onChange={(e) => setDataset(datasets.find((d) => d.id === e.target.value))}
+        {/* Dataset switcher */}
+        {dataset && (
+          <button
+            onClick={() => setWelcomeOpen(true)}
             style={{
               padding: '9px 17px', borderRadius: 9,
               border: '1px solid rgba(125,169,255,0.2)',
@@ -331,31 +327,9 @@ export default function App() {
               fontFamily: "'Inter Tight', system-ui, sans-serif",
             }}
           >
-            {datasets.map((d) => (
-              <option key={d.id} value={d.id} style={{ background: '#0e1428' }}>
-                {d.label}
-              </option>
-            ))}
-          </select>
-          <button
-            onClick={() => dirInputRef.current.click()}
-            disabled={IS_DEPLOYED}
-            title={IS_DEPLOYED ? 'Local datasets are only available when self-hosting' : undefined}
-            style={{
-              padding: '9px 17px', borderRadius: 9,
-              border: '1px solid rgba(232,236,246,0.15)',
-              background: 'transparent', color: '#e8ecf6',
-              fontSize: 18, cursor: IS_DEPLOYED ? 'not-allowed' : 'pointer',
-              opacity: IS_DEPLOYED ? 0.4 : 1,
-            }}
-          >
-            Select local dataset
+            Select another dataset
           </button>
-          <input
-            ref={dirInputRef} type="file" webkitdirectory=""
-            style={{ display: 'none' }} onChange={handleDirChange}
-          />
-        </div>
+        )}
       </header>
 
       {/* ── Dataset card (top-left) ── */}
@@ -727,12 +701,12 @@ export default function App() {
             {error ? (
               <span style={{ fontFamily: 'JetBrains Mono, monospace', fontSize: 12,
                 color: '#ff8a72' }}>{error}</span>
-            ) : (
+            ) : dataset ? (
               <span style={{ fontFamily: 'JetBrains Mono, monospace', fontSize: 12,
                 color: 'rgba(232,236,246,0.35)', letterSpacing: 1.4 }}>
                 {loading ? 'LOADING…' : 'NO DATA'}
               </span>
-            )}
+            ) : null}
           </div>
         )}
       </div>
@@ -747,6 +721,292 @@ export default function App() {
           LOADING
         </div>
       )}
+
+      {welcomeOpen && (
+        <WelcomeModal
+          datasets={datasets}
+          isDeployed={IS_DEPLOYED}
+          initialSelected={dataset ?? urlDescriptor}
+          onConfirm={handleWelcomeConfirm}
+          onCancel={dataset ? () => setWelcomeOpen(false) : undefined}
+        />
+      )}
+    </div>
+  );
+}
+
+// ── Welcome modal ──────────────────────────────────────────────
+
+function WelcomeModal({ datasets, isDeployed, initialSelected, onConfirm, onCancel }) {
+  const hfDatasets = datasets.filter((d) => d.source === 'hf');
+  const isCustomInit = initialSelected?.id?.startsWith?.('custom::');
+  const isFolderInit = initialSelected?.source === 'hf-disk';
+  const [selected, setSelected] = useState(initialSelected ?? null);
+  const [customInput, setCustomInput] = useState(
+    isCustomInit ? initialSelected.dataset : ''
+  );
+  const [folderSelection, setFolderSelection] = useState(
+    isFolderInit ? initialSelected : null
+  );
+  const fileInputRef = useRef(null);
+
+  const handleCustomChange = (e) => {
+    const val = e.target.value;
+    setCustomInput(val);
+    const trimmed = val.trim();
+    if (/^[\w.-]+\/[\w.-]+$/.test(trimmed)) {
+      setSelected({
+        id: `custom::${trimmed}`,
+        label: trimmed,
+        source: 'hf',
+        dataset: trimmed,
+        config: 'default',
+        split: 'train',
+      });
+      setFolderSelection(null);
+    } else if (selected?.id?.startsWith?.('custom::')) {
+      setSelected(null);
+    }
+  };
+
+  const handleSelectKnown = (d) => {
+    setSelected(d);
+    setCustomInput('');
+    setFolderSelection(null);
+  };
+
+  const handleFolderChange = (e) => {
+    const files = Array.from(e.target.files);
+    e.target.value = '';
+    if (!files.length) return;
+    const dirName =
+      files[0]?.webkitRelativePath?.split('/')[0] ?? files[0]?.name ?? 'dataset';
+    const desc = { id: `hf-disk::${dirName}`, label: dirName, source: 'hf-disk', files };
+    setSelected(desc);
+    setFolderSelection(desc);
+    setCustomInput('');
+  };
+
+  const canContinue = selected != null;
+  const customValid =
+    !customInput.trim() || /^[\w.-]+\/[\w.-]+$/.test(customInput.trim());
+
+  return (
+    <div
+      onClick={onCancel}
+      style={{
+        position: 'fixed', inset: 0, zIndex: 100,
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        background: 'rgba(6,8,20,0.65)',
+        backdropFilter: 'blur(10px) saturate(140%)',
+        padding: 24,
+      }}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          ...GLASS,
+          width: '100%', maxWidth: 880,
+          padding: '32px 36px 28px',
+          display: 'flex', flexDirection: 'column', gap: 22,
+          position: 'relative',
+        }}
+      >
+        {onCancel && (
+          <button
+            onClick={onCancel}
+            aria-label="Close"
+            style={{
+              position: 'absolute', top: 14, right: 14,
+              width: 32, height: 32, borderRadius: 8,
+              border: '1px solid rgba(232,236,246,0.12)',
+              background: 'rgba(232,236,246,0.04)',
+              color: 'rgba(232,236,246,0.7)',
+              cursor: 'pointer',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              fontSize: 18, lineHeight: 1,
+            }}
+          >
+            ×
+          </button>
+        )}
+        <div style={{ textAlign: 'center' }}>
+          <div style={{
+            fontWeight: 600, fontSize: 38, letterSpacing: -0.4, color: ACCENT,
+            lineHeight: 1.1,
+          }}>
+            StarEmbed Explorer
+          </div>
+          <div style={{ ...KICKER, marginTop: 10 }}>Choose a dataset</div>
+        </div>
+
+        <div style={{
+          display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20,
+          alignItems: 'stretch',
+        }}>
+          {/* ── Hugging Face column ── */}
+          <div style={{
+            border: '1px solid rgba(125,169,255,0.14)', borderRadius: 10,
+            padding: 16, display: 'flex', flexDirection: 'column', gap: 12,
+          }}>
+            <div style={KICKER}>Hugging Face</div>
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+              {hfDatasets.length === 0 && (
+                <div style={{
+                  fontFamily: 'JetBrains Mono, monospace', fontSize: 13,
+                  color: 'rgba(232,236,246,0.45)',
+                }}>
+                  No preset datasets.
+                </div>
+              )}
+              {hfDatasets.map((d) => {
+                const isSel = selected?.id === d.id;
+                return (
+                  <button
+                    key={d.id}
+                    onClick={() => handleSelectKnown(d)}
+                    style={{
+                      textAlign: 'left',
+                      padding: '10px 12px', borderRadius: 8,
+                      border: `1px solid ${isSel ? ACCENT : 'rgba(125,169,255,0.16)'}`,
+                      background: isSel
+                        ? 'rgba(125,169,255,0.16)'
+                        : 'rgba(125,169,255,0.04)',
+                      color: '#e8ecf6', cursor: 'pointer',
+                      display: 'flex', flexDirection: 'column', gap: 2,
+                      transition: 'background 0.12s, border-color 0.12s',
+                    }}
+                  >
+                    <span style={{
+                      fontSize: 16, fontWeight: 600, letterSpacing: -0.1,
+                    }}>{d.label}</span>
+                    <span style={{
+                      fontFamily: 'JetBrains Mono, monospace', fontSize: 12,
+                      color: 'rgba(232,236,246,0.55)',
+                    }}>{d.dataset}</span>
+                  </button>
+                );
+              })}
+            </div>
+
+            <div style={{
+              height: 1, background: 'rgba(125,169,255,0.12)', margin: '2px 0',
+            }} />
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+              <div style={KICKER}>Or load another Hugging Face dataset</div>
+              <input
+                type="text"
+                placeholder="username/dataset_name"
+                value={customInput}
+                onChange={handleCustomChange}
+                style={{
+                  padding: '9px 11px', borderRadius: 6,
+                  border: `1px solid ${
+                    customInput && !customValid
+                      ? '#ff8a72'
+                      : 'rgba(125,169,255,0.2)'
+                  }`,
+                  background: 'rgba(125,169,255,0.08)',
+                  color: '#e8ecf6',
+                  fontFamily: 'JetBrains Mono, monospace', fontSize: 14,
+                  letterSpacing: 0.3, outline: 'none',
+                }}
+              />
+              {customInput && !customValid && (
+                <div style={{
+                  fontFamily: 'JetBrains Mono, monospace', fontSize: 11,
+                  color: '#ff8a72',
+                }}>
+                  Use the format username/dataset_name
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* ── Local column ── */}
+          <div style={{
+            border: '1px solid rgba(125,169,255,0.14)', borderRadius: 10,
+            padding: 16, display: 'flex', flexDirection: 'column', gap: 12,
+            opacity: isDeployed ? 0.55 : 1,
+          }}>
+            <div style={KICKER}>Local</div>
+
+            <div style={{
+              flex: 1, display: 'flex', flexDirection: 'column',
+              justifyContent: 'center', gap: 10,
+            }}>
+              <button
+                onClick={() => fileInputRef.current?.click()}
+                disabled={isDeployed}
+                style={{
+                  padding: '18px 16px', borderRadius: 8,
+                  border: `1px solid ${
+                    folderSelection ? ACCENT : 'rgba(232,236,246,0.18)'
+                  }`,
+                  background: folderSelection
+                    ? 'rgba(125,169,255,0.16)'
+                    : 'rgba(232,236,246,0.04)',
+                  color: '#e8ecf6',
+                  fontSize: 16,
+                  cursor: isDeployed ? 'not-allowed' : 'pointer',
+                  fontFamily: "'Inter Tight', system-ui, sans-serif",
+                  textAlign: 'left',
+                }}
+              >
+                Select local dataset
+              </button>
+              <input
+                ref={fileInputRef} type="file" webkitdirectory=""
+                style={{ display: 'none' }} onChange={handleFolderChange}
+              />
+
+              {folderSelection && (
+                <div style={{
+                  fontFamily: 'JetBrains Mono, monospace', fontSize: 12,
+                  color: 'rgba(232,236,246,0.65)', wordBreak: 'break-all',
+                }}>
+                  {folderSelection.label} · {folderSelection.files.length} files
+                </div>
+              )}
+            </div>
+
+            {isDeployed && (
+              <div style={{
+                fontSize: 13, lineHeight: 1.45,
+                color: 'rgba(232,236,246,0.55)',
+              }}>
+                Host a StarEmbed Explorer instance on your machine to use local
+                datasets.
+              </div>
+            )}
+          </div>
+        </div>
+
+        <button
+          onClick={() => canContinue && onConfirm(selected)}
+          disabled={!canContinue}
+          style={{
+            alignSelf: 'center',
+            minWidth: 220,
+            padding: '13px 28px', borderRadius: 12, border: 'none',
+            background: canContinue
+              ? `linear-gradient(180deg, ${ACCENT} 0%, #5a8aff 100%)`
+              : 'rgba(125,169,255,0.18)',
+            color: canContinue ? '#0a0e1a' : 'rgba(232,236,246,0.4)',
+            fontFamily: 'JetBrains Mono, monospace', fontSize: 16,
+            fontWeight: 700, letterSpacing: 1.4, textTransform: 'uppercase',
+            cursor: canContinue ? 'pointer' : 'not-allowed',
+            boxShadow: canContinue
+              ? '0 8px 28px rgba(125,169,255,0.4), inset 0 1px 0 rgba(255,255,255,0.35)'
+              : 'none',
+            transition: 'background 0.15s, color 0.15s',
+          }}
+        >
+          Continue
+        </button>
+      </div>
     </div>
   );
 }

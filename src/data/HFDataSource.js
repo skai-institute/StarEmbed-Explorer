@@ -19,7 +19,7 @@ export class HFDataSource extends DataSource {
     super();
     if (!dataset) {
       throw new Error(
-        "HFDataSource requires a `dataset` (e.g. 'username/name'). Set VITE_HF_DATASET.",
+        "HFDataSource requires a `dataset` (e.g. 'username/name').",
       );
     }
     this.dataset = dataset;

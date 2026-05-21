@@ -2,8 +2,8 @@
  * Abstract interface for a time-series dataset source.
  *
  * Concrete implementations:
- *   - LocalDataSource: reads JSONL from public/data/ (dev)
- *   - HFDataSource:    hits the HuggingFace Datasets Server API (prod)
+ *   - HFDataSource:     hits the HuggingFace Datasets Server API
+ *   - HFDiskDataSource: reads Arrow IPC shards from the user's filesystem
  *
  * As we learn more about the dataset schema, we can grow this interface
  * (e.g., getSeries(id), search(query), getColumn(name)). For now it stays
@@ -12,7 +12,7 @@
 export class DataSource {
   /**
    * @returns {Promise<{
-   *   source: "local" | "hf",
+   *   source: "hf" | "hf-disk",
    *   numRows?: number,
    *   columns?: string[],
    *   [key: string]: any

@@ -1,22 +1,14 @@
 /**
- * All datasets available in the dropdown.
- * The first entry is selected on load.
+ * Datasets shown by default in the welcome modal and header dropdown.
  *
- * Local entry:
- *   { id, label, source: "local", path }
- *   path is relative to public/ (same as VITE_LOCAL_DATA_PATH)
- *
- * HuggingFace entry:
+ * Entry shape:
  *   { id, label, source: "hf", dataset, config?, split? }
  *   dataset is "username/repo-name" on the HF Hub
+ *
+ * Users can also load arbitrary HF datasets by typing user/name in the
+ * welcome modal, or load a local Arrow shard directory when self-hosting.
  */
 export const DATASETS = [
-  {
-    id: "ptf-north-local",
-    label: "PTF North",
-    source: "local",
-    path: "data/ptf_north.jsonl",
-  },
   {
     id: "se-test-hf",
     label: "SE test",

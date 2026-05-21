@@ -33,12 +33,6 @@ jobs:
         env:
           # GitHub Pages serves the site from /<repo-name>/
           BASE_PATH: /${{ github.event.repository.name }}/
-          # Production build: read from the HuggingFace API.
-          # Set HF_DATASET as a repository variable (Settings → Variables → Actions).
-          VITE_DATA_SOURCE: hf
-          VITE_HF_DATASET: ${{ vars.HF_DATASET }}
-          VITE_HF_CONFIG: ${{ vars.HF_CONFIG || 'default' }}
-          VITE_HF_SPLIT: ${{ vars.HF_SPLIT || 'train' }}
         run: npm run build
 
       - uses: actions/configure-pages@v4
