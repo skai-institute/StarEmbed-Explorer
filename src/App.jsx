@@ -126,6 +126,11 @@ export default function App() {
   const containerRef = useRef(null);
   const dsRef = useRef(null);
 
+  const QUEUE_TARGET = 10;
+  const prefetchQueueRef = useRef([]);
+  const inflightRef = useRef(0);
+  const epochRef = useRef(0);
+
   // Reset activeBands whenever a new dataset summary arrives.
   useEffect(() => {
     if (summary?.bands) setActiveBands(new Set(summary.bands));
@@ -134,6 +139,8 @@ export default function App() {
   // Load dataset — fetch summary + first random star.
   useEffect(() => {
     if (!dataset) return;
+    epochRef.current++;
+    prefetchQueueRef.current = [];
     let cancelled = false;
     setLoading(true);
     setError(null);
@@ -173,21 +180,61 @@ export default function App() {
     return () => { cancelled = true; };
   }, [dataset]);
 
+  const fetchOneRandom = async () => {
+    const idx = summary?.classIndices
+      ? randomIdx(summary.classIndices, enabledClasses)
+      : Math.floor(Math.random() * totalRows);
+    if (idx === null) return null;
+    const rows = await dsRef.current.getRows({ offset: idx, length: 1 });
+    return rows[0] ?? null;
+  };
+
+  // Background top-up. Remote datasets only — local reads are already instant.
+  const fillQueue = () => {
+    if (!dsRef.current || totalRows === 0) return;
+    if (dataset?.source !== 'hf') return;
+    const myEpoch = epochRef.current;
+    while (inflightRef.current + prefetchQueueRef.current.length < QUEUE_TARGET) {
+      inflightRef.current++;
+      fetchOneRandom()
+        .then((row) => {
+          if (row && epochRef.current === myEpoch) prefetchQueueRef.current.push(row);
+        })
+        .catch(() => {})
+        .finally(() => { inflightRef.current--; });
+    }
+  };
+
+  // Start filling once the dataset is ready. Idempotent — safe to re-run.
+  useEffect(() => {
+    if (dsRef.current && totalRows > 0 && dataset?.source === 'hf') {
+      fillQueue();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [totalRows, summary, dataset]);
+
   const pickRandom = async () => {
     if (!dsRef.current || totalRows === 0) return;
-    setLoading(true);
     setError(null);
+
+    while (prefetchQueueRef.current.length > 0) {
+      const row = prefetchQueueRef.current.shift();
+      if (!enabledClasses || enabledClasses.has(row.class_str ?? '(none)')) {
+        setCurrentRow(row);
+        fillQueue();
+        return;
+      }
+    }
+
+    setLoading(true);
     try {
-      const idx = summary?.classIndices
-        ? randomIdx(summary.classIndices, enabledClasses)
-        : Math.floor(Math.random() * totalRows);
-      if (idx === null) return;
-      const rows = await dsRef.current.getRows({ offset: idx, length: 1 });
-      if (rows[0]) setCurrentRow(rows[0]);
+      const row = await fetchOneRandom();
+      if (row) setCurrentRow(row);
     } catch (err) {
       setError(err.message);
     } finally {
       setLoading(false);
+      fillQueue();
     }
   };
 
@@ -719,6 +766,24 @@ export default function App() {
           color: 'rgba(232,236,246,0.45)', letterSpacing: 1.8, pointerEvents: 'none',
         }}>
           LOADING
+        </div>
+      )}
+
+      {/* Error banner — shown even when a row is already loaded, so failed
+          fetches don't look like a dead button. */}
+      {error && row && !loading && (
+        <div style={{
+          position: 'absolute', top: 12, left: '50%', transform: 'translateX(-50%)',
+          zIndex: 20,
+          padding: '8px 14px', borderRadius: 8,
+          background: 'rgba(255,138,114,0.14)',
+          border: '1px solid rgba(255,138,114,0.45)',
+          fontFamily: 'JetBrains Mono, monospace', fontSize: 12,
+          color: '#ff8a72', letterSpacing: 0.4,
+          maxWidth: '60vw',
+          overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+        }}>
+          {error}
         </div>
       )}
 
