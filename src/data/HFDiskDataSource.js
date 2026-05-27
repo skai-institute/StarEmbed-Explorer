@@ -206,10 +206,11 @@ export class HFDiskDataSource extends DataSource {
 
 // Class-balanced sampling: each class gets at least SKY_FLOOR points (or all
 // of them if fewer), plus a proportional share of the SKY_SAMPLE budget.
-// scattergeo renders in SVG so render time scales ~linearly with point count;
-// 10k is comfortable on desktop. Total may slightly exceed the budget when
+// Rendered on a <canvas> RAF loop (SkyMapCanvas) where projection is
+// precomputed per resize, so per-frame cost is ~one arc-fill per point; canvas
+// fill throughput is the ceiling. Total may slightly exceed the budget when
 // many classes have <floor rows — acceptable tradeoff for visibility.
-const SKY_SAMPLE = 10_000;
+const SKY_SAMPLE = 20_000;
 const SKY_FLOOR = 100;
 
 export function sampleSkyPointsByClass(classCoords) {

@@ -3,9 +3,15 @@
 Build a summary.json for a HuggingFace dataset.
 
 The web app's HFDataSource fetches this file from the HF Hub at
-    https://huggingface.co/datasets/<repo>/resolve/main/summary.json
-to power the sky map, class filter, and class-balanced random sampling
-without downloading the full dataset.
+    https://huggingface.co/datasets/<repo>/resolve/main/summary.<split>.json
+falling back to summary.json, to power the sky map, class filter, and
+class-balanced random sampling without downloading the full dataset.
+
+classIndices holds split-specific row offsets, so multi-split datasets need one
+file per split. By default this builds every split, writing summary.<split>.json
+for each; pass --split to build just one. Upload each file to the repo root. The
+app falls back to a plain summary.json when summary.<split>.json is absent, so
+single-split datasets can keep using summary.json.
 
 Schema (matches HFDiskDataSource._scan output):
     {
@@ -23,18 +29,15 @@ schema, matching normalizeRow in src/data/DataSource.js. Datasets without sky
 coordinates still produce a valid summary with an empty "skyPoints".
 
 Examples:
-    # From a local on-disk dataset
-    python scripts/build_summary.py \\
-        --dataset /path/to/local/dataset \\
-        --output summary.json
+    # Build every split (writes summary.<split>.json for each)
+    python scripts/build_summary.py --dataset nabeelr/SE_test
 
-    # From the HuggingFace Hub
-    python scripts/build_summary.py \\
-        --dataset nabeelr/SE_test \\
-        --output summary.json
+    # Build a single split
+    python scripts/build_summary.py --dataset nabeelr/SE_test --split test
 
-Then upload to the dataset repo:
-    huggingface-cli upload nabeelr/SE_test summary.json summary.json --repo-type=dataset
+Then upload each file to the dataset repo root:
+    huggingface-cli upload nabeelr/SE_test summary.train.json summary.train.json --repo-type=dataset
+    huggingface-cli upload nabeelr/SE_test summary.test.json  summary.test.json  --repo-type=dataset
 """
 from __future__ import annotations
 
@@ -44,37 +47,7 @@ import random
 from pathlib import Path
 
 
-def main() -> None:
-    parser = argparse.ArgumentParser(
-        description=__doc__,
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-    )
-    parser.add_argument(
-        "--dataset",
-        required=True,
-        help="Path to a local on-disk dataset OR a HF Hub repo (e.g. user/name)",
-    )
-    parser.add_argument("--split", default="train", help="Split (default: train)")
-    parser.add_argument("--config", default="default", help="Config name (default: default)")
-    parser.add_argument("--output", default="summary.json", help="Output path (default: summary.json)")
-    parser.add_argument("--sky-sample", type=int, default=10_000, help="Target sky points budget (default: 10000)")
-    parser.add_argument("--sky-floor", type=int, default=100, help="Min sky points per class (default: 100, capped by class size)")
-    parser.add_argument("--seed", type=int, default=42, help="RNG seed for sky sampling")
-    args = parser.parse_args()
-
-    try:
-        from datasets import load_from_disk, load_dataset
-    except ImportError as e:
-        raise SystemExit("Missing dependency. Install with: pip install datasets") from e
-
-    src = Path(args.dataset)
-    if src.exists():
-        ds = load_from_disk(str(src))
-        if hasattr(ds, "keys") and args.split in ds:
-            ds = ds[args.split]
-    else:
-        ds = load_dataset(args.dataset, args.config, split=args.split)
-
+def build_split(ds, split_name: str, output: str | None, args) -> None:
     # Legacy (GluonTS-style) datasets use `bands_data` with bare ZTF band keys
     # and `ra`/`dec` instead of the canonical `lightcurve` + `gaia_dr3_*` names.
     # Mirror the JS normalizer (src/data/DataSource.js) so summaries match.
@@ -136,11 +109,64 @@ def main() -> None:
         "skyPoints": sky_points,
     }
 
-    out = Path(args.output)
+    out = Path(output or f"summary.{split_name}.json")
     out.parent.mkdir(parents=True, exist_ok=True)
     with out.open("w") as f:
         json.dump(summary, f, separators=(",", ":"))
     print(f"Wrote {out}: {total} rows, {len(class_counts)} classes, {len(sky_points)} sky points, {len(bands)} bands")
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(
+        description=__doc__,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    parser.add_argument(
+        "--dataset",
+        required=True,
+        help="Path to a local on-disk dataset OR a HF Hub repo (e.g. user/name)",
+    )
+    parser.add_argument("--split", default=None, help="Split to build; omit to build all splits")
+    parser.add_argument("--config", default="default", help="Config name (default: default)")
+    parser.add_argument(
+        "--output",
+        default=None,
+        help="Output path (default: summary.<split>.json, e.g. summary.train.json)",
+    )
+    parser.add_argument("--sky-sample", type=int, default=20_000, help="Target sky points budget (default: 20000)")
+    parser.add_argument("--sky-floor", type=int, default=100, help="Min sky points per class (default: 100, capped by class size)")
+    parser.add_argument("--seed", type=int, default=42, help="RNG seed for sky sampling")
+    args = parser.parse_args()
+
+    try:
+        from datasets import load_from_disk, load_dataset, get_dataset_split_names
+    except ImportError as e:
+        raise SystemExit("Missing dependency. Install with: pip install datasets") from e
+
+    if args.output and args.split is None:
+        raise SystemExit(
+            "--output names a single file; pass --split to use it, "
+            "or omit --output to build all splits as summary.<split>.json"
+        )
+
+    # Resolve {split_name: Dataset} to build. Default (no --split) is every split.
+    src = Path(args.dataset)
+    if src.exists():
+        loaded = load_from_disk(str(src))
+        if hasattr(loaded, "keys"):  # DatasetDict
+            names = [args.split] if args.split else list(loaded.keys())
+            missing = [s for s in names if s not in loaded]
+            if missing:
+                raise SystemExit(f"Split(s) {missing} not found; available: {list(loaded.keys())}")
+            split_datasets = {s: loaded[s] for s in names}
+        else:  # bare Dataset with no split concept
+            split_datasets = {args.split or "train": loaded}
+    else:
+        names = [args.split] if args.split else get_dataset_split_names(args.dataset, args.config)
+        split_datasets = {s: load_dataset(args.dataset, args.config, split=s) for s in names}
+
+    for split_name, ds in split_datasets.items():
+        build_split(ds, split_name, args.output, args)
 
 
 if __name__ == "__main__":

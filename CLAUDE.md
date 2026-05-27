@@ -37,17 +37,19 @@ Two on-disk schemas carry the same information under different names. The rest o
 
 ## The summary.json mechanism
 
-`HFDataSource.getSummary()` fetches a pre-computed `summary.json` from `https://huggingface.co/datasets/<repo>/resolve/main/summary.json`. **Without it the app degrades**: no sky map, no class filter, no class-balanced random sampling. Falls back gracefully to global random offset.
+`HFDataSource.getSummary()` fetches a pre-computed summary from `https://huggingface.co/datasets/<repo>/resolve/main/summary.<split>.json`, falling back to `summary.json` if that 404s. **Without it the app degrades**: no sky map, no class filter, no class-balanced random sampling. Falls back gracefully to global random offset.
+
+**Per-split naming matters**: `classIndices` holds split-specific row offsets that `getRows({ offset })` relies on, so a `train`-built summary must not be served when viewing another split. Multi-split datasets need one file per split (`summary.<split>.json`); the `summary.json` fallback keeps existing single-split datasets working unchanged.
 
 Why pre-computed: `HFDiskDataSource` builds the summary by scanning the entire dataset. Impossible for a multi-GB remote dataset, and HF's datasets-server doesn't expose per-row sky positions.
 
-Generate with [scripts/build_summary.py](scripts/build_summary.py), upload via `huggingface-cli upload <repo> summary.json summary.json --repo-type=dataset`. Schema matches what `HFDiskDataSource._scan` produces in-memory ([src/data/HFDiskDataSource.js](src/data/HFDiskDataSource.js)) — keep them in sync.
+Generate with [scripts/build_summary.py](scripts/build_summary.py) (run once per `--split`; `--output` defaults to `summary.<split>.json`), upload via `huggingface-cli upload <repo> summary.<split>.json summary.<split>.json --repo-type=dataset`. Schema matches what `HFDiskDataSource._scan` produces in-memory ([src/data/HFDiskDataSource.js](src/data/HFDiskDataSource.js)) — keep them in sync.
 
-Size scales with row count: ~1 MB for 50k rows, ~7 MB for 1M (mostly `classIndices`). Tolerable through ~1M rows; past that, rethink the summary shape.
+Size scales with row count: ~1 MB for 50k rows, ~7 MB for 1M (mostly `classIndices`). The `skyPoints` budget (20k, below) adds ~0.6-0.8 MB at the cap. Tolerable through ~1M rows; past that, rethink the summary shape.
 
 ## Class-balanced sky sampling
 
-The sky map is capped at ~10k points (SVG render scaling). Each class contributes `min(class_size, max(SKY_FLOOR, proportional_share))`. Floor (default 100) ensures rare classes are visible; proportional share keeps common classes from dominating; min cap handles classes smaller than the floor. Total may slightly exceed budget when many small classes exist — acceptable.
+The sky map is capped at ~20k points (`SKY_SAMPLE`). The live renderer is a `<canvas>` RAF loop ([src/components/SkyMapCanvas.jsx](src/components/SkyMapCanvas.jsx)) — not the older Plotly `scattergeo` ([SkyPlot.jsx](src/components/SkyPlot.jsx), now unused). Projection is precomputed per resize (behind a dirty flag), so the per-frame cost is ~one canvas arc-fill per point; **canvas fill throughput is the ceiling**, not SVG node count. Each class contributes `min(class_size, max(SKY_FLOOR, proportional_share))`. Floor (default 100) ensures rare classes are visible; proportional share keeps common classes from dominating; min cap handles classes smaller than the floor. Total may slightly exceed budget when many small classes exist — acceptable.
 
 Helper `sampleSkyPointsByClass()` is exported from [src/data/HFDiskDataSource.js](src/data/HFDiskDataSource.js). The Python script [scripts/build_summary.py](scripts/build_summary.py) implements the same algorithm so summaries built locally match what the JS source would produce.
 

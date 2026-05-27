@@ -21,6 +21,7 @@ function mollweide(raDeg, decDeg) {
 export default function SkyMapCanvas({ skyPoints = [], currentRow, enabledClasses, classColors }) {
   const canvasRef = useRef(null);
   const pointDataRef = useRef([]);
+  const reprojectRef = useRef(true);
   const enabledRef = useRef(enabledClasses);
   const colorsRef = useRef(classColors);
   const rowRef = useRef(currentRow);
@@ -35,10 +36,12 @@ export default function SkyMapCanvas({ skyPoints = [], currentRow, enabledClasse
     const next = () => { s = (s * 9301 + 49297) % 233280; return s / 233280; };
     pointDataRef.current = skyPoints.map((p) => ({
       ra: p.ra, dec: p.dec, cls: p.cls,
+      px: 0, py: 0,
       phase: next() * Math.PI * 2,
       speed: 0.6 + next() * 1.6,
       base: 0.45 + next() * 0.5,
     }));
+    reprojectRef.current = true;
   }, [skyPoints]);
 
   // Single RAF loop — started once, reads mutable refs for dynamic data.
@@ -53,6 +56,7 @@ export default function SkyMapCanvas({ skyPoints = [], currentRow, enabledClasse
       canvas.width = Math.round(canvas.clientWidth * dpr);
       canvas.height = Math.round(canvas.clientHeight * dpr);
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      reprojectRef.current = true;
     };
     fit();
     const ro = new ResizeObserver(fit);
@@ -78,6 +82,18 @@ export default function SkyMapCanvas({ skyPoints = [], currentRow, enabledClasse
         const m = mollweide(ra, dec);
         return { x: cx + m.x * (RX / SQRT2), y: cy + m.y * RY };
       };
+
+      // Projection is frame-invariant — recompute per-point screen coords only
+      // when the sky data or canvas size changed, not every frame.
+      if (reprojectRef.current) {
+        const pts = pointDataRef.current;
+        for (let i = 0; i < pts.length; i++) {
+          const m = mollweide(pts[i].ra, pts[i].dec);
+          pts[i].px = cx + m.x * (RX / SQRT2);
+          pts[i].py = cy + m.y * RY;
+        }
+        reprojectRef.current = false;
+      }
 
       ctx.clearRect(0, 0, W, H);
 
@@ -116,12 +132,11 @@ export default function SkyMapCanvas({ skyPoints = [], currentRow, enabledClasse
       for (let i = 0; i < points.length; i++) {
         const p = points[i];
         if (enabled && !enabled.has(p.cls)) continue;
-        const { x, y } = proj(p.ra, p.dec);
         const tw = 0.5 + Math.sin(t * p.speed + p.phase) * 0.5;
         ctx.globalAlpha = p.base * (0.4 + tw * 0.85);
         ctx.fillStyle = colors[p.cls] || '#88a4d8';
         ctx.beginPath();
-        ctx.arc(x, y, 0.95 * (0.85 + tw * 0.5), 0, Math.PI * 2);
+        ctx.arc(p.px, p.py, 0.95 * (0.85 + tw * 0.5), 0, Math.PI * 2);
         ctx.fill();
       }
       ctx.globalAlpha = 1;

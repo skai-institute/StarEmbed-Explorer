@@ -124,29 +124,41 @@ export class HFDataSource extends DataSource {
     return null;
   }
 
-  // Fetches a pre-computed summary.json from the dataset repo. Build/upload via
-  // scripts/build_summary.py. Returns null gracefully if absent so the app
-  // degrades to global random sampling without sky map or class filter.
+  // Fetches a single summary file. Returns the parsed summary, undefined if the
+  // file is absent (404, so the caller can try a fallback), or null if present
+  // but unusable (unsupported version).
+  async _fetchSummary(url) {
+    const res = await fetch(url);
+    if (res.status === 404) return undefined;
+    if (!res.ok) {
+      throw new Error(`summary fetch failed: ${res.status} ${res.statusText}`);
+    }
+    const data = await res.json();
+    if (data.version !== 1) {
+      console.warn("HF summary: unsupported version", data.version);
+      return null;
+    }
+    return data;
+  }
+
+  // Fetches a pre-computed summary from the dataset repo. Build/upload via
+  // scripts/build_summary.py. Multi-split datasets carry one file per split
+  // (summary.<split>.json), since classIndices holds split-specific row offsets
+  // that getRows({ offset }) relies on — serving another split's summary would
+  // be wrong. Tries summary.<split>.json first, falling back to a plain
+  // summary.json so single-split datasets keep working unchanged. Returns null
+  // gracefully if absent so the app degrades to global random sampling without
+  // sky map or class filter.
   async getSummary() {
     if (this._summaryCache !== undefined) return this._summaryCache;
-    const url = `https://huggingface.co/datasets/${this.dataset}/resolve/main/summary.json`;
+    const base = `https://huggingface.co/datasets/${this.dataset}/resolve/main`;
     try {
-      const res = await fetch(url);
-      if (res.status === 404) {
-        this._summaryCache = null;
-        return null;
+      let data = await this._fetchSummary(`${base}/summary.${this.split}.json`);
+      if (data === undefined) {
+        data = await this._fetchSummary(`${base}/summary.json`);
       }
-      if (!res.ok) {
-        throw new Error(`summary.json fetch failed: ${res.status} ${res.statusText}`);
-      }
-      const data = await res.json();
-      if (data.version !== 1) {
-        console.warn("HF summary: unsupported version", data.version);
-        this._summaryCache = null;
-        return null;
-      }
-      this._summaryCache = data;
-      return data;
+      this._summaryCache = data ?? null;
+      return this._summaryCache;
     } catch (e) {
       console.warn("HF summary unavailable:", e.message);
       this._summaryCache = null;
