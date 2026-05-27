@@ -1,4 +1,4 @@
-import { DataSource } from "./DataSource.js";
+import { DataSource, detectFormat, normalizeRow } from "./DataSource.js";
 import { tableFromIPC, DataType } from "apache-arrow";
 
 // DataType.isLargeList was removed in apache-arrow v14+.
@@ -18,15 +18,24 @@ export class HFDiskDataSource extends DataSource {
   constructor(files) {
     super();
     const all = Array.from(files);
-    this._shards = all
-      .filter((f) => f.name.endsWith(".arrow"))
-      .sort((a, b) => a.name.localeCompare(b.name));
+    // HF writes `cache-<hash>.arrow` files into a split dir whenever you run
+    // .map()/.filter(); each is a full copy of the split, so counting them as
+    // shards multiplies every row (and grows each time the dataset is
+    // reprocessed). Keep only the canonical `data-N-of-M.arrow` shards, falling
+    // back to any non-cache .arrow if a dataset names its shards differently.
+    const arrow = all.filter((f) => f.name.endsWith(".arrow"));
+    const dataShards = arrow.filter((f) => /^data-\d+-of-\d+\.arrow$/.test(f.name));
+    this._shards = (dataShards.length
+      ? dataShards
+      : arrow.filter((f) => !f.name.startsWith("cache-"))
+    ).sort((a, b) => a.name.localeCompare(b.name));
     this._infoFile = all.find((f) => f.name === "dataset_info.json");
     this.dirName =
       all[0]?.webkitRelativePath?.split("/")[0] ?? all[0]?.name ?? "dataset";
     this._allNames = all.map((f) => f.webkitRelativePath || f.name);
 
     this._scanPromise = null;      // single shared Promise for the count scan
+    this._format = null;           // resolved during _scan from shard schema
     this._cumulativeCounts = null; // cumulative row counts across shards
     this._totalRows = 0;
     this._summary = null;
@@ -50,6 +59,7 @@ export class HFDiskDataSource extends DataSource {
       const classIndices = new Map(); // class → global row indices
       const classCoords = new Map();  // class → array of {ra, dec}
       let bands = null;
+      let fmt = null;
       let globalIdx = 0;
 
       for (const file of this._shards) {
@@ -57,16 +67,20 @@ export class HFDiskDataSource extends DataSource {
         const table = tableFromIPC(new Uint8Array(buf));
         counts.push(table.numRows);
 
-        // Band names from schema (first shard only)
+        // Resolve format + band names from schema (first shard only)
         if (!bands) {
-          const lcField = table.schema.fields.find((f) => f.name === "lightcurve");
-          if (lcField) bands = lcField.type.children.map((f) => f.name);
+          fmt = detectFormat(table.schema.fields.map((f) => f.name));
+          this._format = fmt;
+          const lcField = table.schema.fields.find((f) => f.name === fmt.lightcurveKey);
+          bands = lcField
+            ? lcField.type.children.map((f) => fmt.bandKeyMap?.[f.name] ?? f.name)
+            : [];
         }
 
         // Build class index and bucket RA/Dec by class in one columnar pass
-        const classCol = table.getChild("class_str");
-        const raCol = table.getChild("gaia_dr3_ra");
-        const decCol = table.getChild("gaia_dr3_dec");
+        const classCol = table.getChild(fmt.classKey);
+        const raCol = table.getChild(fmt.raKey);
+        const decCol = table.getChild(fmt.decKey);
         for (let i = 0; i < table.numRows; i++) {
           const key = classCol ? (classCol.get(i) ?? "(none)") : "(none)";
           if (!classIndices.has(key)) classIndices.set(key, []);
@@ -144,7 +158,7 @@ export class HFDiskDataSource extends DataSource {
       const rowTo = Math.min(table.numRows, rowFrom + remaining);
 
       for (let i = rowFrom; i < rowTo; i++) {
-        collected.push(extractRow(table, table.schema.fields, i));
+        collected.push(normalizeRow(extractRow(table, table.schema.fields, i)));
       }
 
       const fetched = rowTo - rowFrom;
@@ -166,12 +180,12 @@ export class HFDiskDataSource extends DataSource {
     const target = String(id).trim();
     for (let shardIdx = 0; shardIdx < this._shards.length; shardIdx++) {
       const table = await this._loadShard(shardIdx);
-      const idCol = table.getChild("gaia_dr3_source_id");
+      const idCol = table.getChild(this._format.idKey);
       if (!idCol) return null;
       for (let i = 0; i < table.numRows; i++) {
         const v = idCol.get(i);
         if (v != null && String(v) === target) {
-          return extractRow(table, table.schema.fields, i);
+          return normalizeRow(extractRow(table, table.schema.fields, i));
         }
       }
     }

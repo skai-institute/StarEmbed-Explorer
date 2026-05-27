@@ -15,5 +15,5 @@ export function createDataSource(descriptor) {
   throw new Error(`Unknown data source: ${descriptor.source}`);
 }
 
-export { DataSource } from "./DataSource.js";
+export { DataSource, detectFormat, normalizeRow, ROW_FORMATS } from "./DataSource.js";
 export { HFDataSource, HFDiskDataSource };

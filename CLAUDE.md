@@ -23,6 +23,12 @@ Two implementations swap behind it:
 
 Factory at [src/data/index.js](src/data/index.js) dispatches by `descriptor.source`.
 
+## Dataset formats (current vs legacy)
+
+Two on-disk schemas carry the same information under different names. The rest of the app only ever sees the **canonical (current)** shape — `lightcurve` struct of bands → `{mjd, mag, mag_unc, ...}`, `gaia_dr3_*` astrometry, `class_str`. The **legacy** GluonTS-style schema (e.g. [StarEmbed/ZTF_40k](https://huggingface.co/datasets/StarEmbed/ZTF_40k)) uses a `bands_data` struct with per-band `target` (mag), `past_feat_dynamic_real` (mag error), `mjd`; bare ZTF band keys `g`/`r`/`i`; `sourceid`; and `ra`/`dec`.
+
+`ROW_FORMATS` / `detectFormat` / `normalizeRow` in [src/data/DataSource.js](src/data/DataSource.js) own this. Detection is automatic (a schema with `bands_data` and no `lightcurve` is legacy). `normalizeRow` rewrites legacy rows into the canonical shape at the data-source boundary, so **no rendering component knows the legacy layout exists**. Both `HFDataSource` and `HFDiskDataSource` normalize in `getRows`/`findBySourceId`, and resolve format-specific column names (`idKey`, `raKey`, `decKey`, `classKey`) from the spec. The legacy band remap `g`→`g_ZTF` lives inside `normalizeRow` and is gated on the legacy format — modern datasets never have a survey assumed. [scripts/build_summary.py](scripts/build_summary.py) mirrors the same detection + remap so remote summaries match.
+
 ## Dataset selection (three ways)
 
 1. **Welcome modal** — on every page load, the user picks a dataset before the app loads anything. Lists known HF datasets from `DATASETS` in [src/datasets.js](src/datasets.js), accepts a custom `user/dataset_name`, or accepts a local Arrow shard directory when self-hosting.
@@ -49,7 +55,7 @@ Helper `sampleSkyPointsByClass()` is exported from [src/data/HFDiskDataSource.js
 
 Each row's `lightcurve` field is a struct of bands → `{mjd, mag, mag_unc, ...}`. Band keys are arbitrary strings (e.g. `g_ZTF`, `clear_CSS`). [src/bands.js](src/bands.js) maps known keys to display label, color, and survey grouping. Unknown bands fall back to `key` as label and a fallback palette color. To add a band, edit `SURVEY_LIBRARY` in that file.
 
-The HF `/rows` endpoint returns nested struct/list data already in the schema-native shape. No row transformation needed in `HFDataSource`.
+The HF `/rows` endpoint returns nested struct/list data already in the schema-native shape; the only transformation is `normalizeRow` (see *Dataset formats* above), which is a no-op for current-format datasets.
 
 ## Build / deploy
 

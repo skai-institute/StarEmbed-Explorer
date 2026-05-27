@@ -1,5 +1,5 @@
 import { useEffect, useState, useRef, useMemo, Component } from 'react';
-import { createDataSource } from './data';
+import { createDataSource, detectFormat } from './data';
 import { DATASETS } from './datasets.js';
 import SkyMapCanvas from './components/SkyMapCanvas.jsx';
 import LightCurveChart from './components/LightCurveChart.jsx';
@@ -322,6 +322,9 @@ export default function App() {
   const row = currentRow;
   const cls = row?.class_str ?? '—';
   const clsColor = classColors[cls] || ACCENT;
+  // Legacy datasets carry no Gaia astrometry or distinct source id; hide the
+  // fields that would only ever read '—' or duplicate the headline id.
+  const isLegacy = info?.columns ? detectFormat(info.columns).name === 'legacy' : false;
 
   const datasetName = info?.path ?? dataset?.label ?? '';
 
@@ -543,7 +546,7 @@ export default function App() {
           Random star
         </button>
 
-        <form
+        {!isLegacy && <form
           onSubmit={(e) => { e.preventDefault(); searchByID(); }}
           style={{ ...GLASS, padding: '14px 16px' }}
         >
@@ -593,7 +596,7 @@ export default function App() {
               {searchError}
             </div>
           )}
-        </form>
+        </form>}
       </div>
       )}
 
@@ -681,7 +684,9 @@ export default function App() {
               <div style={{
                 display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6,
               }}>
-                <span style={KICKER}>Gaia DR3</span>
+                <span style={KICKER}>
+                  {row.gaia_dr3_source_id != null ? 'Gaia DR3' : (datasetName || 'Source')}
+                </span>
                 <span style={{
                   fontSize: 16, padding: '3px 10px', borderRadius: 4,
                   background: clsColor, color: '#0b0f1c',
@@ -705,20 +710,20 @@ export default function App() {
               }}>
                 <KV l="PERIOD"
                   v={row.period != null ? row.period.toFixed(4) + ' d' : '—'} />
-                <KV l="PARALLAX"
-                  v={row.parallax != null ? row.parallax.toFixed(3) + ' mas' : '—'} />
+                {!isLegacy && <KV l="PARALLAX"
+                  v={row.parallax != null ? row.parallax.toFixed(3) + ' mas' : '—'} />}
                 <KV l="RA"
                   v={row.gaia_dr3_ra?.toFixed(4) ?? '—'} />
                 <KV l="DEC"
                   v={row.gaia_dr3_dec?.toFixed(4) ?? '—'} />
-                <KV l="PM RA"
-                  v={row.pmra != null ? row.pmra.toFixed(2) + ' mas/yr' : '—'} />
-                <KV l="PM Dec"
-                  v={row.pmdec != null ? row.pmdec.toFixed(2) + ' mas/yr' : '—'} />
-                <KV l="RV"
+                {!isLegacy && <KV l="PM RA"
+                  v={row.pmra != null ? row.pmra.toFixed(2) + ' mas/yr' : '—'} />}
+                {!isLegacy && <KV l="PM Dec"
+                  v={row.pmdec != null ? row.pmdec.toFixed(2) + ' mas/yr' : '—'} />}
+                {!isLegacy && <KV l="RV"
                   v={row.radial_velocity != null
-                    ? row.radial_velocity.toFixed(2) + ' km/s' : '—'} />
-                <KV l={`${datasetName} ID`} v={row.sourceid ?? '—'} />
+                    ? row.radial_velocity.toFixed(2) + ' km/s' : '—'} />}
+                {!isLegacy && <KV l={`${datasetName} ID`} v={row.sourceid ?? '—'} />}
               </div>
             </div>
 

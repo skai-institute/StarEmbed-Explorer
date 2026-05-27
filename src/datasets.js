@@ -10,10 +10,10 @@
  */
 export const DATASETS = [
   {
-    id: "se-test-hf",
-    label: "SE test",
+    id: "ztf-40k",
+    label: "ZTF 40k",
     source: "hf",
-    dataset: "nabeelr/SE_test",
+    dataset: "StarEmbed/ZTF_40k",
     config: "default",
     split: "train",
   },

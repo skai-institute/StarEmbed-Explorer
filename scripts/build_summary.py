@@ -17,6 +17,11 @@ Schema (matches HFDiskDataSource._scan output):
       "skyPoints": [{"ra", "dec", "cls"}, ...]
     }
 
+The dataset format is auto-detected: legacy datasets (a `bands_data` struct
+with bare ZTF band keys and `ra`/`dec` columns) are mapped to the canonical
+schema, matching normalizeRow in src/data/DataSource.js. Datasets without sky
+coordinates still produce a valid summary with an empty "skyPoints".
+
 Examples:
     # From a local on-disk dataset
     python scripts/build_summary.py \\
@@ -70,14 +75,29 @@ def main() -> None:
     else:
         ds = load_dataset(args.dataset, args.config, split=args.split)
 
-    bands = list(ds.features["lightcurve"].keys())
+    # Legacy (GluonTS-style) datasets use `bands_data` with bare ZTF band keys
+    # and `ra`/`dec` instead of the canonical `lightcurve` + `gaia_dr3_*` names.
+    # Mirror the JS normalizer (src/data/DataSource.js) so summaries match.
+    feats = ds.features
+    is_legacy = "bands_data" in feats and "lightcurve" not in feats
+    band_key_map = {"g": "g_ZTF", "r": "r_ZTF", "i": "i_ZTF"} if is_legacy else {}
+    lc_key = "bands_data" if is_legacy else "lightcurve"
+    class_key = "class_str"
+    ra_key, dec_key = ("ra", "dec") if is_legacy else ("gaia_dr3_ra", "gaia_dr3_dec")
 
-    sub = ds.select_columns(["class_str", "gaia_dr3_ra", "gaia_dr3_dec"])
+    bands = [band_key_map.get(k, k) for k in feats[lc_key].keys()]
+    has_coords = ra_key in feats and dec_key in feats
+
+    cols = [class_key] + ([ra_key, dec_key] if has_coords else [])
+    sub = ds.select_columns(cols)
     class_indices: dict[str, list[int]] = {}
     class_coords: dict[str, list[tuple[float, float]]] = {}
     i = 0
     for batch in sub.iter(batch_size=10_000):
-        for cls, ra, dec in zip(batch["class_str"], batch["gaia_dr3_ra"], batch["gaia_dr3_dec"]):
+        classes = batch[class_key]
+        ras = batch[ra_key] if has_coords else [None] * len(classes)
+        decs = batch[dec_key] if has_coords else [None] * len(classes)
+        for cls, ra, dec in zip(classes, ras, decs):
             key = cls if cls is not None else "(none)"
             class_indices.setdefault(key, []).append(i)
             if ra is not None and dec is not None:

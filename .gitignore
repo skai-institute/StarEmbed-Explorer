@@ -18,3 +18,4 @@ dist-ssr
 # avoid checking in big exports. Uncomment if needed.
 # public/data/*.jsonl
 # !public/data/sample.jsonl
+todo.md

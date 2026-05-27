@@ -1,4 +1,4 @@
-import { DataSource } from "./DataSource.js";
+import { DataSource, detectFormat, normalizeRow } from "./DataSource.js";
 
 /**
  * Reads from the HuggingFace Datasets Server API.
@@ -26,6 +26,7 @@ export class HFDataSource extends DataSource {
     this.config = config;
     this.split = split;
     this._infoCache = null;
+    this._format = null;
     this._summaryCache = undefined; // distinct from null: caches the "no summary" answer too
   }
 
@@ -44,6 +45,8 @@ export class HFDataSource extends DataSource {
     const data = await res.json();
     const cfg = data?.dataset_info?.[this.config];
     const splitInfo = cfg?.splits?.[this.split];
+    const columns = cfg?.features ? Object.keys(cfg.features) : [];
+    this._format = detectFormat(columns);
 
     this._infoCache = {
       source: "hf",
@@ -51,7 +54,7 @@ export class HFDataSource extends DataSource {
       config: this.config,
       split: this.split,
       numRows: splitInfo?.num_examples,
-      columns: cfg?.features ? Object.keys(cfg.features) : [],
+      columns,
       raw: data,
     };
     return this._infoCache;
@@ -76,7 +79,7 @@ export class HFDataSource extends DataSource {
         throw new Error(`HF rows request failed: ${res.status} ${res.statusText}`);
       }
       const data = await res.json();
-      const rows = (data?.rows || []).map((r) => r.row);
+      const rows = (data?.rows || []).map((r) => normalizeRow(r.row));
       if (rows.length === 0) break;
       collected.push(...rows);
       cursor += rows.length;
@@ -96,13 +99,15 @@ export class HFDataSource extends DataSource {
     if (!/^\d+$/.test(numeric)) {
       throw new Error("Source ID must be numeric");
     }
+    await this.getInfo(); // ensure this._format is resolved
+    const idKey = this._format.idKey;
     let lastErr = null;
     for (const literal of [`'${numeric}'`, numeric]) {
       const url = `${BASE}/filter?${this._qs({
         dataset: this.dataset,
         config: this.config,
         split: this.split,
-        where: `gaia_dr3_source_id=${literal}`,
+        where: `${idKey}=${literal}`,
         length: "1",
       })}`;
       const res = await fetch(url);
@@ -111,7 +116,7 @@ export class HFDataSource extends DataSource {
         continue;
       }
       const data = await res.json();
-      const rows = (data?.rows || []).map((r) => r.row);
+      const rows = (data?.rows || []).map((r) => normalizeRow(r.row));
       if (rows[0]) return rows[0];
       lastErr = null;
     }
