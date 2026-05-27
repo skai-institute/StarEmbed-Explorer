@@ -69,6 +69,7 @@ const IS_DEPLOYED = import.meta.env.BASE_URL !== '/';
 // Lets visitors point a deployed (e.g. GitHub Pages) build at any public HF
 // dataset via ?dataset=user/name (with optional ?config, ?split, ?label).
 // Returns null on missing or malformed input so the app falls back to DATASETS.
+// split defaults to "*" (every split, merged); pass ?split=train to pin one.
 function descriptorFromURL() {
   const p = new URLSearchParams(window.location.search);
   const dataset = p.get('dataset');
@@ -79,7 +80,7 @@ function descriptorFromURL() {
     source: 'hf',
     dataset,
     config: p.get('config') || 'default',
-    split: p.get('split') || 'train',
+    split: p.get('split') || '*',
   };
 }
 
@@ -831,7 +832,7 @@ function WelcomeModal({ datasets, isDeployed, initialSelected, onConfirm, onCanc
         source: 'hf',
         dataset: trimmed,
         config: 'default',
-        split: 'train',
+        split: '*',
       });
       setFolderSelection(null);
     } else if (selected?.id?.startsWith?.('custom::')) {
