@@ -84,6 +84,22 @@ function descriptorFromURL() {
   };
 }
 
+// Tracks whether the viewport is phone-sized. Drives a separate, reduced
+// mobile layout — the desktop layout is left completely untouched.
+const MOBILE_QUERY = '(max-width: 768px)';
+function useIsMobile() {
+  const [isMobile, setIsMobile] = useState(
+    () => typeof window !== 'undefined' && window.matchMedia(MOBILE_QUERY).matches
+  );
+  useEffect(() => {
+    const mq = window.matchMedia(MOBILE_QUERY);
+    const handler = (e) => setIsMobile(e.matches);
+    mq.addEventListener('change', handler);
+    return () => mq.removeEventListener('change', handler);
+  }, []);
+  return isMobile;
+}
+
 // ── Error boundary ─────────────────────────────────────────────
 
 class ErrorBoundary extends Component {
@@ -105,6 +121,7 @@ class ErrorBoundary extends Component {
 // ── Main App ───────────────────────────────────────────────────
 
 export default function App() {
+  const isMobile = useIsMobile();
   const urlDescriptor = useMemo(() => descriptorFromURL(), []);
   const [datasets, setDatasets] = useState(() =>
     urlDescriptor ? [urlDescriptor, ...DATASETS] : DATASETS
@@ -328,6 +345,48 @@ export default function App() {
   const isLegacy = info?.columns ? detectFormat(info.columns).name === 'legacy' : false;
 
   const datasetName = info?.path ?? dataset?.label ?? '';
+
+  const welcomeModal = welcomeOpen && (
+    <WelcomeModal
+      datasets={datasets}
+      isDeployed={IS_DEPLOYED}
+      isMobile={isMobile}
+      initialSelected={dataset ?? urlDescriptor}
+      onConfirm={handleWelcomeConfirm}
+      onCancel={dataset ? () => setWelcomeOpen(false) : undefined}
+    />
+  );
+
+  if (isMobile) {
+    return (
+      <>
+        <MobileView
+          dataset={dataset}
+          summary={summary}
+          datasetName={datasetName}
+          classes={classes}
+          classColors={classColors}
+          enabledClasses={enabledClasses}
+          allClassesOn={allClassesOn}
+          maxClassCount={maxClassCount}
+          toggleClass={toggleClass}
+          toggleAllClasses={toggleAllClasses}
+          row={row}
+          cls={cls}
+          clsColor={clsColor}
+          bandColors={bandColors}
+          activeBands={activeBands}
+          bandGroups={bandGroups}
+          toggleBand={toggleBand}
+          pickRandom={pickRandom}
+          loading={loading}
+          error={error}
+          onSwitchDataset={() => setWelcomeOpen(true)}
+        />
+        {welcomeModal}
+      </>
+    );
+  }
 
   return (
     <div
@@ -793,22 +852,14 @@ export default function App() {
         </div>
       )}
 
-      {welcomeOpen && (
-        <WelcomeModal
-          datasets={datasets}
-          isDeployed={IS_DEPLOYED}
-          initialSelected={dataset ?? urlDescriptor}
-          onConfirm={handleWelcomeConfirm}
-          onCancel={dataset ? () => setWelcomeOpen(false) : undefined}
-        />
-      )}
+      {welcomeModal}
     </div>
   );
 }
 
 // ── Welcome modal ──────────────────────────────────────────────
 
-function WelcomeModal({ datasets, isDeployed, initialSelected, onConfirm, onCancel }) {
+function WelcomeModal({ datasets, isDeployed, isMobile, initialSelected, onConfirm, onCancel }) {
   const hfDatasets = datasets.filter((d) => d.source === 'hf');
   const isCustomInit = initialSelected?.id?.startsWith?.('custom::');
   const isFolderInit = initialSelected?.source === 'hf-disk';
@@ -870,7 +921,9 @@ function WelcomeModal({ datasets, isDeployed, initialSelected, onConfirm, onCanc
         display: 'flex', alignItems: 'center', justifyContent: 'center',
         background: 'rgba(6,8,20,0.65)',
         backdropFilter: 'blur(10px) saturate(140%)',
-        padding: 24,
+        padding: isMobile ? 12 : 24,
+        color: '#e8ecf6',
+        fontFamily: "'Inter Tight', 'Inter', system-ui, sans-serif",
       }}
     >
       <div
@@ -878,8 +931,9 @@ function WelcomeModal({ datasets, isDeployed, initialSelected, onConfirm, onCanc
         style={{
           ...GLASS,
           width: '100%', maxWidth: 880,
-          padding: '32px 36px 28px',
-          display: 'flex', flexDirection: 'column', gap: 22,
+          maxHeight: '92vh', overflowY: 'auto',
+          padding: isMobile ? '24px 18px 22px' : '32px 36px 28px',
+          display: 'flex', flexDirection: 'column', gap: isMobile ? 18 : 22,
           position: 'relative',
         }}
       >
@@ -912,7 +966,8 @@ function WelcomeModal({ datasets, isDeployed, initialSelected, onConfirm, onCanc
         </div>
 
         <div style={{
-          display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20,
+          display: 'grid',
+          gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: 20,
           alignItems: 'stretch',
         }}>
           {/* ── Hugging Face column ── */}
@@ -996,8 +1051,8 @@ function WelcomeModal({ datasets, isDeployed, initialSelected, onConfirm, onCanc
             </div>
           </div>
 
-          {/* ── Local column ── */}
-          <div style={{
+          {/* ── Local column (desktop only — never used on mobile) ── */}
+          {!isMobile && <div style={{
             border: '1px solid rgba(125,169,255,0.14)', borderRadius: 10,
             padding: 16, display: 'flex', flexDirection: 'column', gap: 12,
             opacity: isDeployed ? 0.55 : 1,
@@ -1052,7 +1107,7 @@ function WelcomeModal({ datasets, isDeployed, initialSelected, onConfirm, onCanc
                 datasets.
               </div>
             )}
-          </div>
+          </div>}
         </div>
 
         <button
@@ -1076,6 +1131,289 @@ function WelcomeModal({ datasets, isDeployed, initialSelected, onConfirm, onCanc
           }}
         >
           Continue
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ── Mobile layout ──────────────────────────────────────────────
+// A reduced, single-column experience: phase-folded lightcurve up top,
+// dataset/star info + class selector below, random-star button pinned to the
+// bottom. The sky map, raw-observation chart and ID search are dropped here.
+
+function MobileView({
+  dataset, summary, datasetName,
+  classes, classColors, enabledClasses, allClassesOn, maxClassCount,
+  toggleClass, toggleAllClasses,
+  row, cls, clsColor,
+  bandColors, activeBands, bandGroups, toggleBand,
+  pickRandom, loading, error, onSwitchDataset,
+}) {
+  const bands = bandGroups.flatMap((g) => g.bands);
+  return (
+    <div style={{
+      position: 'fixed', inset: 0, display: 'flex', flexDirection: 'column',
+      background: 'radial-gradient(ellipse at 30% 15%, #14213d 0%, #060814 70%)',
+      color: '#e8ecf6',
+      fontFamily: "'Inter Tight', 'Inter', system-ui, sans-serif",
+    }}>
+      {/* Header */}
+      <header style={{
+        flexShrink: 0, display: 'flex', alignItems: 'center',
+        justifyContent: 'space-between', gap: 10, padding: '12px 14px',
+      }}>
+        <div style={{ display: 'flex', alignItems: 'baseline', gap: 7, minWidth: 0 }}>
+          <span style={{
+            fontWeight: 600, fontSize: 22, letterSpacing: -0.2, color: ACCENT,
+            whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+          }}>StarEmbed Explorer</span>
+        </div>
+        {dataset && (
+          <button
+            onClick={onSwitchDataset}
+            style={{
+              flexShrink: 0,
+              padding: '9px 17px', borderRadius: 9,
+              border: '1px solid rgba(125,169,255,0.2)',
+              background: 'rgba(125,169,255,0.08)',
+              color: '#e8ecf6', fontSize: 18, cursor: 'pointer',
+              fontFamily: "'Inter Tight', system-ui, sans-serif",
+            }}
+          >
+            Switch
+          </button>
+        )}
+      </header>
+
+      {error && (
+        <div style={{
+          flexShrink: 0, margin: '0 12px 8px',
+          padding: '8px 12px', borderRadius: 8,
+          background: 'rgba(255,138,114,0.14)',
+          border: '1px solid rgba(255,138,114,0.45)',
+          fontFamily: 'JetBrains Mono, monospace', fontSize: 12, color: '#ff8a72',
+          wordBreak: 'break-word',
+        }}>{error}</div>
+      )}
+
+      {/* Phase-folded lightcurve — top half */}
+      <div style={{
+        flexShrink: 0, height: '44vh', padding: '0 12px 12px',
+        display: 'flex', flexDirection: 'column',
+      }}>
+        <div style={{
+          ...GLASS, flex: 1, padding: '12px 14px',
+          display: 'flex', flexDirection: 'column', minHeight: 0,
+        }}>
+          <div style={{
+            display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6,
+            flexWrap: 'wrap',
+          }}>
+            <span style={{ ...KICKER, color: 'rgba(232,236,246,0.7)' }}>
+              Phase-folded
+            </span>
+            {row && (
+              <span style={{
+                fontSize: 16, padding: '3px 10px', borderRadius: 4,
+                background: clsColor, color: '#0b0f1c',
+                fontFamily: 'JetBrains Mono, monospace', fontWeight: 700,
+                letterSpacing: 0.4,
+              }}>{cls}</span>
+            )}
+            {row?.period != null && (
+              <span style={{
+                fontFamily: 'JetBrains Mono, monospace', fontSize: 14,
+                color: 'rgba(232,236,246,0.55)',
+              }}>P={row.period.toFixed(4)} d</span>
+            )}
+          </div>
+
+          {/* Band toggles (horizontal scroll) */}
+          {bands.length > 1 && (
+            <div style={{
+              display: 'flex', gap: 4, overflowX: 'auto', paddingBottom: 6,
+              marginBottom: 2, flexShrink: 0,
+            }}>
+              {bands.map((b) => {
+                const isOn = !activeBands || activeBands.has(b.key);
+                return (
+                  <button
+                    key={b.key}
+                    onClick={() => toggleBand(b.key)}
+                    style={{
+                      flexShrink: 0,
+                      padding: '4px 10px', borderRadius: 999, border: 'none',
+                      background: isOn ? b.color + '22' : 'transparent',
+                      color: '#e8ecf6', opacity: isOn ? 1 : 0.35,
+                      fontFamily: 'JetBrains Mono, monospace', fontSize: 11,
+                      fontWeight: 600, cursor: 'pointer',
+                      display: 'inline-flex', alignItems: 'center', gap: 5,
+                    }}
+                  >
+                    <span style={{
+                      width: 6, height: 6, borderRadius: 3,
+                      background: b.color, flexShrink: 0,
+                    }} />
+                    {b.label}
+                  </button>
+                );
+              })}
+            </div>
+          )}
+
+          <div style={{ flex: 1, minHeight: 0 }}>
+            {row ? (
+              <ErrorBoundary key={`m-phase-${row.gaia_dr3_source_id ?? row.sourceid}`}>
+                <LightCurveChart
+                  row={row} mode="phase"
+                  bandColors={bandColors} activeBands={activeBands}
+                />
+              </ErrorBoundary>
+            ) : (
+              <div style={{
+                height: '100%', display: 'flex', alignItems: 'center',
+                justifyContent: 'center',
+                fontFamily: 'JetBrains Mono, monospace', fontSize: 12,
+                color: 'rgba(232,236,246,0.35)', letterSpacing: 1.4,
+              }}>{loading ? 'LOADING…' : dataset ? 'NO DATA' : ''}</div>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* Scrollable: dataset info + star info + class selector */}
+      <div style={{
+        flex: 1, overflowY: 'auto', padding: '0 12px 12px',
+        display: 'flex', flexDirection: 'column', gap: 12,
+      }}>
+        {/* Dataset info */}
+        {summary && (
+          <div style={{ ...GLASS, padding: '14px 18px' }}>
+            <div style={KICKER}>
+              {dataset.source === 'hf' ? 'Remote dataset' : 'Local dataset'}
+            </div>
+            <div style={{
+              fontSize: 24, fontWeight: 600, letterSpacing: -0.4,
+              marginTop: 2, marginBottom: 12, wordBreak: 'break-all',
+            }}>{datasetName}</div>
+            <div style={{ display: 'flex', gap: 16 }}>
+              <StatBlock n={summary.totalRows.toLocaleString()} l="STARS" />
+              <StatBlock n={classes.length} l="CLASSES" />
+            </div>
+          </div>
+        )}
+
+        {/* Class selector */}
+        {classes.length > 0 && (
+          <div style={{ ...GLASS, padding: '14px 16px' }}>
+            <div style={{
+              display: 'flex', justifyContent: 'space-between',
+              alignItems: 'center', marginBottom: 8,
+            }}>
+              <span style={KICKER}>
+                Class filter · {enabledClasses?.size ?? 0}/{classes.length}
+              </span>
+              <button
+                onClick={() => toggleAllClasses(!allClassesOn)}
+                style={{
+                  border: 'none', background: 'transparent', color: ACCENT,
+                  fontFamily: 'JetBrains Mono, monospace', fontSize: 15,
+                  letterSpacing: 1.1, textTransform: 'uppercase',
+                  cursor: 'pointer', padding: 0,
+                }}
+              >{allClassesOn ? 'Clear' : 'All'}</button>
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+              {classes.map((c) => {
+                const isOn = enabledClasses?.has(c.id) ?? true;
+                const color = classColors[c.id] || ACCENT;
+                const barPct = (c.count / maxClassCount) * 100;
+                return (
+                  <button
+                    key={c.id}
+                    onClick={() => toggleClass(c.id)}
+                    style={{
+                      display: 'grid',
+                      gridTemplateColumns: '16px 1fr 1fr 76px 60px',
+                      alignItems: 'center', gap: 8,
+                      border: 'none', background: 'transparent',
+                      padding: '3px 0', cursor: 'pointer', textAlign: 'left',
+                      fontFamily: 'JetBrains Mono, monospace', fontSize: 17,
+                      color: '#e8ecf6', opacity: isOn ? 1 : 0.42,
+                    }}
+                  >
+                    <span style={{
+                      width: 12, height: 12, borderRadius: 3, flexShrink: 0,
+                      border: `1px solid ${isOn ? color : 'rgba(255,255,255,0.3)'}`,
+                      background: isOn ? color : 'transparent',
+                      display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    }}>
+                      {isOn && (
+                        <svg width="8" height="8" viewBox="0 0 8 8" fill="none">
+                          <path d="M1.5 4.2L3.2 5.8L6.5 2" stroke="#0a0e1a"
+                            strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
+                        </svg>
+                      )}
+                    </span>
+                    <span style={{
+                      fontWeight: 600, letterSpacing: 0.3,
+                      overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                    }}>{c.id}</span>
+                    <span style={{
+                      height: 4, background: 'rgba(255,255,255,0.08)',
+                      borderRadius: 2, position: 'relative', overflow: 'hidden',
+                    }}>
+                      <span style={{
+                        position: 'absolute', top: 0, left: 0, height: '100%',
+                        width: `${barPct}%`, background: color, borderRadius: 2,
+                      }} />
+                    </span>
+                    <span style={{
+                      textAlign: 'right', color: 'rgba(232,236,246,0.5)',
+                      fontVariantNumeric: 'tabular-nums',
+                    }}>{c.count.toLocaleString()}</span>
+                    <span style={{
+                      textAlign: 'right', color: 'rgba(232,236,246,0.5)',
+                      fontVariantNumeric: 'tabular-nums',
+                    }}>{c.pct.toFixed(1)}%</span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Random-star button — pinned to bottom */}
+      <div style={{
+        flexShrink: 0, padding: '10px 12px',
+        paddingBottom: 'calc(10px + env(safe-area-inset-bottom))',
+        borderTop: '1px solid rgba(125,169,255,0.15)',
+        background: 'rgba(6,8,20,0.72)', backdropFilter: 'blur(12px)',
+      }}>
+        <button
+          onClick={pickRandom}
+          disabled={loading || !summary}
+          style={{
+            width: '100%', display: 'flex', alignItems: 'center',
+            justifyContent: 'center', gap: 10,
+            padding: '14px 20px', borderRadius: 12, border: 'none',
+            background: `linear-gradient(180deg, ${ACCENT} 0%, #5a8aff 100%)`,
+            color: '#0a0e1a',
+            fontFamily: 'JetBrains Mono, monospace', fontSize: 18,
+            fontWeight: 700, letterSpacing: 1.5, textTransform: 'uppercase',
+            cursor: loading ? 'default' : 'pointer',
+            opacity: loading || !summary ? 0.5 : 1,
+            boxShadow: '0 8px 28px rgba(125,169,255,0.4), inset 0 1px 0 rgba(255,255,255,0.35)',
+          }}
+        >
+          <svg width="16" height="16" viewBox="0 0 13 13" fill="none"
+            stroke="currentColor" strokeWidth="1.6"
+            strokeLinecap="round" strokeLinejoin="round">
+            <path d="M2 3.5h3l5 6h3M2 9.5h3l1.5-1.8M9 8.5l3 1L11 12.5" />
+          </svg>
+          Random star
         </button>
       </div>
     </div>
