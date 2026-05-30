@@ -140,6 +140,7 @@ export default function App() {
   const [activeBands, setActiveBands] = useState(null);
   const [searchInput, setSearchInput] = useState('');
   const [searchError, setSearchError] = useState(null);
+  const [infoOpen, setInfoOpen] = useState(false);
 
   const containerRef = useRef(null);
   const dsRef = useRef(null);
@@ -357,6 +358,14 @@ export default function App() {
     />
   );
 
+  const infoModal = infoOpen && (
+    <InfoModal
+      isMobile={isMobile}
+      surveys={bandGroups.map((g) => g.survey)}
+      onClose={() => setInfoOpen(false)}
+    />
+  );
+
   if (isMobile) {
     return (
       <>
@@ -382,8 +391,10 @@ export default function App() {
           loading={loading}
           error={error}
           onSwitchDataset={() => setWelcomeOpen(true)}
+          onInfo={() => setInfoOpen(true)}
         />
         {welcomeModal}
+        {infoModal}
       </>
     );
   }
@@ -426,20 +437,23 @@ export default function App() {
         </div>
 
         {/* Dataset switcher */}
-        {dataset && (
-          <button
-            onClick={() => setWelcomeOpen(true)}
-            style={{
-              padding: '9px 17px', borderRadius: 9,
-              border: '1px solid rgba(125,169,255,0.2)',
-              background: 'rgba(125,169,255,0.08)',
-              color: '#e8ecf6', fontSize: 18, cursor: 'pointer',
-              fontFamily: "'Inter Tight', system-ui, sans-serif",
-            }}
-          >
-            Select another dataset
-          </button>
-        )}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          <InfoButton onClick={() => setInfoOpen(true)} inline />
+          {dataset && (
+            <button
+              onClick={() => setWelcomeOpen(true)}
+              style={{
+                padding: '9px 17px', borderRadius: 9,
+                border: '1px solid rgba(125,169,255,0.2)',
+                background: 'rgba(125,169,255,0.08)',
+                color: '#e8ecf6', fontSize: 18, cursor: 'pointer',
+                fontFamily: "'Inter Tight', system-ui, sans-serif",
+              }}
+            >
+              Select another dataset
+            </button>
+          )}
+        </div>
       </header>
 
       {/* ── Dataset card (top-left) ── */}
@@ -853,6 +867,7 @@ export default function App() {
       )}
 
       {welcomeModal}
+      {infoModal}
     </div>
   );
 }
@@ -1148,7 +1163,7 @@ function MobileView({
   toggleClass, toggleAllClasses,
   row, cls, clsColor,
   bandColors, activeBands, bandGroups, toggleBand,
-  pickRandom, loading, error, onSwitchDataset,
+  pickRandom, loading, error, onSwitchDataset, onInfo,
 }) {
   const bands = bandGroups.flatMap((g) => g.bands);
   return (
@@ -1169,21 +1184,24 @@ function MobileView({
             whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
           }}>StarEmbed Explorer</span>
         </div>
-        {dataset && (
-          <button
-            onClick={onSwitchDataset}
-            style={{
-              flexShrink: 0,
-              padding: '9px 17px', borderRadius: 9,
-              border: '1px solid rgba(125,169,255,0.2)',
-              background: 'rgba(125,169,255,0.08)',
-              color: '#e8ecf6', fontSize: 18, cursor: 'pointer',
-              fontFamily: "'Inter Tight', system-ui, sans-serif",
-            }}
-          >
-            Switch
-          </button>
-        )}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
+          <InfoButton onClick={onInfo} />
+          {dataset && (
+            <button
+              onClick={onSwitchDataset}
+              style={{
+                flexShrink: 0,
+                padding: '9px 17px', borderRadius: 9,
+                border: '1px solid rgba(125,169,255,0.2)',
+                background: 'rgba(125,169,255,0.08)',
+                color: '#e8ecf6', fontSize: 18, cursor: 'pointer',
+                fontFamily: "'Inter Tight', system-ui, sans-serif",
+              }}
+            >
+              Switch
+            </button>
+          )}
+        </div>
       </header>
 
       {error && (
@@ -1487,6 +1505,205 @@ function ChartCol({ title, children }) {
         {title}
       </div>
       <div style={{ flex: 1, minHeight: 0 }}>{children}</div>
+    </div>
+  );
+}
+
+// ── Information & acknowledgements ─────────────────────────────
+
+const GITHUB_ICON = (
+  <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"
+    style={{ verticalAlign: '-3px' }} aria-hidden="true">
+    <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38
+      0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01
+      1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95
+      0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27
+      2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82
+      1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01
+      2.2 0 .21.15.46.55.38A8.01 8.01 0 0016 8c0-4.42-3.58-8-8-8z" />
+  </svg>
+);
+
+// Funding acknowledgements + citations keyed by the survey names that
+// groupBandsBySurvey() produces. Only surveys present in the loaded data
+// are rendered in the info panel.
+const SURVEY_ACK = {
+  ZTF: {
+    text:
+      'Based on observations obtained with the Samuel Oschin Telescope 48-inch ' +
+      'and the 60-inch Telescope at the Palomar Observatory as part of the ' +
+      'Zwicky Transient Facility project. ZTF is supported by the National ' +
+      'Science Foundation under Grants No. AST-1440341, AST-2034437, and ' +
+      'currently Award #2407588. ZTF receives additional funding from the ZTF ' +
+      'partnership. Current members include Caltech, USA; Caltech/IPAC, USA; ' +
+      'University of Maryland, USA; University of California, Berkeley, USA; ' +
+      'University of Wisconsin at Milwaukee, USA; Cornell University, USA; ' +
+      'Drexel University, USA; University of North Carolina at Chapel Hill, ' +
+      'USA; Institute of Science and Technology, Austria; National Central ' +
+      'University, Taiwan, and OKC, University of Stockholm, Sweden. ' +
+      "Operations are conducted by Caltech's Optical Observatory (COO), " +
+      'Caltech/IPAC, and the University of Washington at Seattle, USA.',
+    citations: [
+      { label: 'Bellm et al. 19', href: 'https://ui.adsabs.harvard.edu/abs/2019PASP..131a8002B/abstract' },
+      { label: 'Masci et al. 19', href: 'https://ui.adsabs.harvard.edu/abs/2019PASP..131a8003M/abstract' },
+      { label: 'Graham et al. 19', href: 'https://ui.adsabs.harvard.edu/abs/2019PASP..131g8001G/abstract' },
+    ],
+  },
+  CSS: {
+    text:
+      'The CSS survey is funded by the National Aeronautics and Space ' +
+      'Administration under Grant No. NNG05GF22G issued through the Science ' +
+      'Mission Directorate Near-Earth Objects Observations Program. The CRTS ' +
+      'survey is supported by the U.S. National Science Foundation under ' +
+      'grants AST-0909182 and AST-1313422.',
+    citations: [
+      { label: 'Drake et al. 09', href: 'https://ui.adsabs.harvard.edu/abs/2009ApJ...696..870D/abstract' },
+    ],
+  },
+};
+
+function InfoLink({ href, children }) {
+  return (
+    <a
+      href={href}
+      target="_blank"
+      rel="noopener noreferrer"
+      style={{ color: ACCENT, textDecoration: 'none', fontWeight: 600 }}
+    >
+      {children}
+    </a>
+  );
+}
+
+function InfoButton({ onClick }) {
+  const [hover, setHover] = useState(false);
+  return (
+    <button
+      onClick={onClick}
+      onMouseEnter={() => setHover(true)}
+      onMouseLeave={() => setHover(false)}
+      aria-label="Information and acknowledgements"
+      title="Information and acknowledgements"
+      style={{
+        flexShrink: 0,
+        width: 26, height: 26, borderRadius: '50%',
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        border: '1px solid rgba(125,169,255,0.3)',
+        background: hover ? 'rgba(125,169,255,0.16)' : 'rgba(125,169,255,0.04)',
+        color: hover ? ACCENT : 'rgba(232,236,246,0.45)',
+        cursor: 'pointer', padding: 0,
+        fontFamily: 'Georgia, "Times New Roman", serif',
+        fontSize: 16, fontStyle: 'italic', fontWeight: 700, lineHeight: 1,
+        transition: 'background 0.15s, color 0.15s',
+      }}
+    >
+      i
+    </button>
+  );
+}
+
+function InfoModal({ isMobile, surveys = [], onClose }) {
+  const acked = surveys.filter((s) => SURVEY_ACK[s]);
+  return (
+    <div
+      onClick={onClose}
+      style={{
+        position: 'fixed', inset: 0, zIndex: 110,
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        background: 'rgba(6,8,20,0.65)',
+        backdropFilter: 'blur(10px) saturate(140%)',
+        padding: isMobile ? 12 : 24,
+        color: '#e8ecf6',
+        fontFamily: "'Inter Tight', 'Inter', system-ui, sans-serif",
+      }}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          ...GLASS,
+          width: '100%', maxWidth: 720,
+          maxHeight: '92vh', overflowY: 'auto',
+          padding: isMobile ? '24px 18px 22px' : '32px 36px 28px',
+          display: 'flex', flexDirection: 'column', gap: 18,
+          position: 'relative',
+        }}
+      >
+        <button
+          onClick={onClose}
+          aria-label="Close"
+          style={{
+            position: 'absolute', top: 14, right: 14,
+            width: 32, height: 32, borderRadius: 8,
+            border: '1px solid rgba(232,236,246,0.12)',
+            background: 'rgba(232,236,246,0.04)',
+            color: 'rgba(232,236,246,0.7)',
+            cursor: 'pointer',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            fontSize: 18, lineHeight: 1,
+          }}
+        >
+          ×
+        </button>
+
+        <div style={{
+          fontWeight: 600, fontSize: isMobile ? 26 : 32, letterSpacing: -0.4,
+          color: ACCENT, lineHeight: 1.1, paddingRight: 36,
+        }}>
+          Information and acknowledgements
+        </div>
+
+        <p style={{ margin: 0, fontSize: 16, lineHeight: 1.6 }}>
+          This website was made by Nabeel Rehemtulla{' '}
+          <InfoLink href="https://github.com/nabeelre">{GITHUB_ICON}</InfoLink>{' '}
+          of the StarEmbed team using Claude Code. The source code is available on{' '}
+          <InfoLink href="https://github.com/nabeelre/StarEmbed-Explorer">
+            Github
+          </InfoLink>.
+        </p>
+
+        <p style={{ margin: 0, fontSize: 15, lineHeight: 1.6,
+          color: 'rgba(232,236,246,0.85)' }}>
+          The catalog of stars presented here is based off of the Catalina
+          Surveys Periodic Variable Stars Catalogs (
+          <InfoLink href="https://ui.adsabs.harvard.edu/abs/2014ApJS..213....9D/abstract">Drake et al. 14</InfoLink>,{' '}
+          <InfoLink href="https://ui.adsabs.harvard.edu/abs/2017MNRAS.469.3688D/abstract">Drake et al. 17</InfoLink>
+          ) which were further vetted and cross-matched to Gaia by{' '}
+          <InfoLink href="https://ui.adsabs.harvard.edu/abs/2023A%26A...674A..22G/abstract">Gavras et al. 23</InfoLink>.
+        </p>
+
+        <div>
+          <div style={{ ...KICKER, marginBottom: 8 }}>StarEmbed</div>
+          <p style={{ margin: 0, fontSize: 15, lineHeight: 1.6,
+            color: 'rgba(232,236,246,0.85)' }}>
+            We gratefully acknowledge the support of the NSF-Simons AI-Institute
+            for the Sky (SkAI) via grants NSF AST-2421845 and Simons Foundation
+            MPS-AI-00010513.
+          </p>
+        </div>
+
+        {acked.map((survey) => {
+          const { text, citations } = SURVEY_ACK[survey];
+          return (
+            <div key={survey}>
+              <div style={{ ...KICKER, marginBottom: 8 }}>{survey}</div>
+              <p style={{ margin: 0, fontSize: 15, lineHeight: 1.6,
+                color: 'rgba(232,236,246,0.85)' }}>
+                {text}
+              </p>
+              {citations?.length > 0 && (
+                <div style={{ marginTop: 6, fontSize: 15, lineHeight: 1.6 }}>
+                  {citations.map((c, i) => (
+                    <span key={c.href}>
+                      {i > 0 && ', '}
+                      <InfoLink href={c.href}>{c.label}</InfoLink>
+                    </span>
+                  ))}
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }
