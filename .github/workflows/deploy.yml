@@ -32,7 +32,7 @@ jobs:
       - name: Build
         env:
           # GitHub Pages serves the site from /<repo-name>/
-          BASE_PATH: /${{ github.event.repository.name }}/
+          BASE_PATH: /
         run: npm run build
 
       - uses: actions/configure-pages@v4
